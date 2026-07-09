@@ -1,22 +1,34 @@
+from fastapi import FastAPI
 from RealtimeSTT import AudioToTextRecorder
 
-def main():
-    print("🎙️ Initializing recorder... Please wait.")
-    
-    # Initialize the recorder wrapper
-    recorder = AudioToTextRecorder(
-        model="base",             # Sweet spot for your AMD CPU
-        device="cpu",             # Forces CPU usage on your AMD machine
-        compute_type="int8"       # Low-memory quantized compression
-    )
-    
-    print("✅ System Ready! Speak into your microphone...")
-    
-    while True:
-        # This keeps listening and prints text as soon as it detects you stopped speaking
-        text = recorder.text()
-        print(f"📋 Transcribed: {text}")
+# 1. Initialize the FastAPI application
+app = FastAPI(title="Voice Transcriber API")
 
-if __name__ == '__main__':
-    # This block shields Windows from multiprocessing crash loops
-    main()
+# We will store our recorder here so it loads once when the server starts
+recorder = None
+
+@app.on_event("startup")
+def load_model():
+    global recorder
+    print("🎙️ Initializing AI Model... Please wait.")
+    recorder = AudioToTextRecorder(
+        model="base",             
+        device="cpu",             
+        compute_type="int8"       
+    )
+    print("✅ System Ready! Server is actively listening.")
+
+@app.get("/")
+def home():
+    return {"message": "Welcome to the Voice Transcriber API. Go to /transcribe to record."}
+
+@app.get("/transcribe")
+def transcribe_audio():
+    """
+    When someone visits this endpoint, the server will listen to the mic,
+    process the speech, and return the text.
+    """
+    print("Listening for speech...")
+    # This will block and listen to the server's microphone until you stop speaking
+    text = recorder.text() 
+    return {"status": "success", "transcribed_text": text}
