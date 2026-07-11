@@ -39,7 +39,9 @@ async function getRelevantContext(userText: string) {
     let validContext = "";
     
     // We can bump this slightly to 1.4 to account for Whisper mishearing words
-    const DISTANCE_THRESHOLD = 1.4; 
+    const DISTANCE_THRESHOLD = 450; 
+
+    
 
     // ADDED: Console log to help you debug the actual math scores!
     console.log("Transcribed Text:", userText);
@@ -68,22 +70,27 @@ export async function POST(req: Request) {
   try {
     const formData = await req.formData();
     const audioBlob = formData.get('audio') as Blob;
+    const textInput = formData.get('text') as string;
     const sessionId = formData.get('sessionId') as string || 'default-session';
 
-    if (!audioBlob) {
-      return NextResponse.json({ error: 'No audio provided' }, { status: 400 });
+    let userText = "";
+
+    if (textInput) {
+      userText = textInput;
+    } else if (audioBlob) {
+      const fastApiFormData = new FormData();
+      fastApiFormData.append('file', audioBlob, 'voice.webm');
+
+      const transcriptionRes = await fetch(FASTAPI_URL, {
+        method: 'POST',
+        body: fastApiFormData,
+      });
+      
+      const transcriptionData = await transcriptionRes.json();
+      userText = transcriptionData.text;
+    } else {
+      return NextResponse.json({ error: 'No input provided' }, { status: 400 });
     }
-
-    const fastApiFormData = new FormData();
-    fastApiFormData.append('file', audioBlob, 'voice.webm');
-
-    const transcriptionRes = await fetch(FASTAPI_URL, {
-      method: 'POST',
-      body: fastApiFormData,
-    });
-    
-    const transcriptionData = await transcriptionRes.json();
-    const userText = transcriptionData.text;
 
     if (!userText || userText.trim() === "") {
       return NextResponse.json({ 
