@@ -2,12 +2,67 @@ import { NextResponse } from 'next/server';
 import { redis } from '@/lib/redis';
 import { streamText } from 'ai';
 import { createOllama } from 'ai-sdk-ollama';
+import { ChromaClient } from 'chromadb';
 
 const ollama = createOllama({
   baseURL: 'http://localhost:11434',
 });
 
+// const chroma = new ChromaClient({ path: "http://localhost:8001" });
 const FASTAPI_URL = 'http://127.0.0.1:8000/transcribe';
+
+const chroma = new ChromaClient({ host: "localhost", port: 8001 });
+
+async function getRelevantContext(userText: string) {
+  try {
+    const embedResponse = await fetch('http://localhost:11434/api/embeddings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        model: 'nomic-embed-text', 
+        prompt: userText 
+      })
+    });
+    
+    const embedData = await embedResponse.json();
+    const queryVector = embedData.embedding;
+
+    const collection = await chroma.getCollection({ name: "zenvixor_services" });
+    const results = await collection.query({
+      queryEmbeddings: [queryVector],
+      nResults: 3,
+    });
+
+    const distances = results.distances?.[0] || [];
+    const documents = results.documents?.[0] || [];
+    
+    let validContext = "";
+    
+    // We can bump this slightly to 1.4 to account for Whisper mishearing words
+    const DISTANCE_THRESHOLD = 1.4; 
+
+    // ADDED: Console log to help you debug the actual math scores!
+    console.log("Transcribed Text:", userText);
+    console.log("Vector Distances:", distances);
+
+    // FIXED: Strict TypeScript null checks
+    for (let i = 0; i < distances.length; i++) {
+      const dist = distances[i];
+      const doc = documents[i];
+
+      if (dist !== null && dist !== undefined && doc !== null && doc !== undefined) {
+        if (dist < DISTANCE_THRESHOLD) {
+          validContext += doc + "\n\n";
+        }
+      }
+    }
+
+    return validContext.trim();
+  } catch (error) {
+    console.error("RAG Error:", error);
+    return "";
+  }
+}
 
 export async function POST(req: Request) {
   try {
@@ -43,24 +98,15 @@ export async function POST(req: Request) {
     history = history.filter((msg: { role: string }) => msg.role !== 'system');
     history.push({ role: 'user', content: userText });
 
-    const systemPersona = `You are Vanguard, the elite AI Customer Success Agent for Zenvixor Studios. Your role is to assist clients professionally, warmly, and concisely. 
+    const retrievedDocs = await getRelevantContext(userText);
 
-### CORE IDENTITY & TONE
-- Be professional, crisp, and highly helpful.
-- Keep responses short. Users are speaking via voice, so avoid long paragraphs.
-- Never mention that you are an AI, a language model, or powered by Ollama/Gemma. Speak as a proud representative of Zenvixor Studios.
+    let systemPersona = `You are Vanguard, the elite AI Customer Success Agent for Zenvixor Studios. Your role is to assist clients professionally and concisely.`;
 
-### ZENVIXOR STUDIOS KNOWLEDGE BASE
-You only know the following facts. Treat this as your absolute ground truth:
-- Services Offered: High-performance web development, premium video editing, and modern social media management.
-- Business Hours: Monday to Friday, 9:00 AM to 6:00 PM.
-- Contact Email: contact@zenvixor.com
-- Pricing: We provide custom quotes based on the exact scope of your project.
-
-### STRICT BOUNDARIES & GUARDRAILS
-1. ZERO HALLUCINATION: If a user asks about a service, price, or policy that is NOT explicitly listed in the Knowledge Base above, you must state that you do not have that information and offer to connect them with a human.
-2. OUT-OF-SCOPE REFUSAL: You exist ONLY to discuss Zenvixor Studios. If the user asks about coding advice, general knowledge, math, politics, weather, or anything unrelated to the business, you MUST politely refuse.
-3. REFUSAL SCRIPT: Use this exact phrasing for out-of-scope questions: "I specialize strictly in Zenvixor Studios' services and operations. Is there anything I can help you with regarding our web development, video editing, or social media management?"`;
+    if (retrievedDocs) {
+      systemPersona += `\n\n### BUSINESS CONTEXT\nUse the following retrieved company documents to answer the user's question. \nCRITICAL RULE: You must base your answer strictly on the text below. Do not invent pricing, services, or facts. \nIf the answer cannot be found in this text, say exactly: "I do not have that specific information on hand, let me connect you with a human agent."\n\n---\n${retrievedDocs}\n---`;
+    } else {
+      systemPersona += `\n\n### BUSINESS CONTEXT\nNo relevant company documents were found for this query. \nCRITICAL RULE: You must politely inform the user that this topic is outside your current knowledge base and offer to connect them with a human agent. Do not attempt to answer the question.`;
+    }
 
     const result = streamText({
       model: ollama('gemma3:4b') as any, 
