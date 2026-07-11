@@ -14,8 +14,67 @@ export const ChatInterface = () => {
   const [statusMessage, setStatusMessage] = useState<'idle' | 'recording' | 'transcribing' | 'streaming'>('idle');
   const [streamingText, setStreamingText] = useState('');
   
+  const [typedInput, setTypedInput] = useState('');
+  
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+
+  const sendPayload = async (formData: FormData, isAudio: boolean) => {
+    if (isAudio) {
+      setStatusMessage('transcribing');
+    } else {
+      setStatusMessage('streaming');
+    }
+
+    try {
+      const res = await fetch('/api/chat', { method: 'POST', body: formData });
+      
+      if (!res.ok) throw new Error('Network communication failure');
+
+      // Check if response is JSON (e.g. error/empty_speech)
+      const contentType = res.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const json = await res.json();
+        if (json.error) {
+          setMessages(prev => [...prev, { role: 'ai', content: json.reply || json.error }]);
+          return;
+        }
+      }
+
+      if (isAudio) {
+        const encodedUserText = res.headers.get('x-transcribed-text');
+        if (encodedUserText) {
+          const userText = decodeURIComponent(encodedUserText);
+          setMessages(prev => [...prev, { role: 'user', content: userText }]);
+        }
+      }
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) return;
+
+      setStatusMessage('streaming');
+      let textAccumulator = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        textAccumulator += decoder.decode(value, { stream: true });
+        setStreamingText(textAccumulator);
+      }
+
+      if (textAccumulator) {
+        setMessages(prev => [...prev, { role: 'ai', content: textAccumulator }]);
+      }
+
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setStreamingText('');
+      setStatusMessage('idle');
+    }
+  };
 
   const startRecording = async () => {
     try {
@@ -29,7 +88,6 @@ export const ChatInterface = () => {
       };
 
       mediaRecorder.onstop = async () => {
-        setStatusMessage('transcribing');
         const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
         
         stream.getTracks().forEach(track => track.stop());
@@ -38,41 +96,7 @@ export const ChatInterface = () => {
         formData.append('audio', audioBlob);
         formData.append('sessionId', 'zenvixor-support-session');
 
-        try {
-          const res = await fetch('/api/chat', { method: 'POST', body: formData });
-          
-          if (!res.ok) throw new Error('Network communication failure');
-
-          const encodedUserText = res.headers.get('x-transcribed-text');
-          if (encodedUserText) {
-            const userText = decodeURIComponent(encodedUserText);
-            setMessages(prev => [...prev, { role: 'user', content: userText }]);
-          }
-
-          const reader = res.body?.getReader();
-          const decoder = new TextDecoder();
-          if (!reader) return;
-
-          setStatusMessage('streaming');
-          let textAccumulator = '';
-
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-
-            textAccumulator += decoder.decode(value, { stream: true });
-            setStreamingText(textAccumulator);
-          }
-
-          if (textAccumulator) {
-            setMessages(prev => [...prev, { role: 'ai', content: textAccumulator }]);
-          }
-
-        } catch (error) {
-        } finally {
-          setStreamingText('');
-          setStatusMessage('idle');
-        }
+        await sendPayload(formData, true);
       };
 
       mediaRecorder.start();
@@ -88,6 +112,23 @@ export const ChatInterface = () => {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
+  };
+
+  const handleSendText = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!typedInput.trim() || statusMessage !== 'idle') return;
+
+    const textToSend = typedInput.trim();
+    setTypedInput('');
+
+    // Optimistically show user message
+    setMessages(prev => [...prev, { role: 'user', content: textToSend }]);
+
+    const formData = new FormData();
+    formData.append('text', textToSend);
+    formData.append('sessionId', 'zenvixor-support-session');
+
+    await sendPayload(formData, false);
   };
 
   return (
@@ -107,7 +148,7 @@ export const ChatInterface = () => {
         {messages.length === 0 && !streamingText && (
           <div className="flex-1 flex items-center justify-center text-gray-500 text-center">
             <p className="max-w-xs text-sm leading-relaxed">
-              Welcome to Zenvixor Studios. Hold the microphone below to ask a question about our operations.
+              Welcome to Zenvixor Studios. Type your question or hold the microphone below to talk about our operations.
             </p>
           </div>
         )}
@@ -127,21 +168,46 @@ export const ChatInterface = () => {
         )}
       </div>
 
-      <div className="p-6 bg-gray-950 border-t border-gray-800 flex justify-center items-center">
-        <button
-          onMouseDown={startRecording}
-          onMouseUp={stopRecording}
-          onTouchStart={startRecording}
-          onTouchEnd={stopRecording}
-          disabled={statusMessage !== 'idle' && statusMessage !== 'recording'}
-          className={`px-10 py-4 rounded-full font-bold text-white transition-all transform select-none cursor-pointer ${
-            isRecording 
-              ? 'bg-red-500 scale-95 shadow-inner ring-4 ring-red-500/20' 
-              : 'bg-indigo-600 hover:bg-indigo-500 hover:scale-105 shadow-lg shadow-indigo-500/25'
-          } ${(statusMessage !== 'idle' && statusMessage !== 'recording') ? 'opacity-40 cursor-not-allowed' : ''}`}
-        >
-          {isRecording ? '🎙️ Release to Transcribe' : '🎙️ Hold to Talk'}
-        </button>
+      <div className="p-4 bg-gray-950 border-t border-gray-800">
+        <form onSubmit={handleSendText} className="w-full flex gap-3 items-center">
+          <input
+            type="text"
+            value={typedInput}
+            onChange={(e) => setTypedInput(e.target.value)}
+            disabled={statusMessage !== 'idle' && statusMessage !== 'recording'}
+            placeholder={isRecording ? "Recording audio..." : "Type a message or hold the mic..."}
+            className="flex-1 bg-gray-900 border border-gray-800 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 rounded-xl px-4 py-3 text-white placeholder-gray-500 outline-none text-sm transition-all duration-200 disabled:opacity-55"
+          />
+          
+          <button
+            type="submit"
+            disabled={statusMessage !== 'idle' || !typedInput.trim()}
+            className="px-5 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-semibold transition-all duration-200 disabled:opacity-40 disabled:hover:scale-100 hover:scale-[1.02] active:scale-95 shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <span>Send</span>
+            <span>✈️</span>
+          </button>
+
+          <div className="h-8 w-[1px] bg-gray-800 mx-1 flex-shrink-0" />
+
+          <button
+            type="button"
+            onMouseDown={startRecording}
+            onMouseUp={stopRecording}
+            onTouchStart={startRecording}
+            onTouchEnd={stopRecording}
+            disabled={statusMessage !== 'idle' && statusMessage !== 'recording'}
+            className={`px-5 py-3 rounded-xl font-semibold text-sm transition-all duration-200 transform select-none cursor-pointer flex items-center gap-2 flex-shrink-0 ${
+              isRecording 
+                ? 'bg-red-500 text-white scale-95 shadow-inner ring-4 ring-red-500/20 animate-pulse' 
+                : 'bg-gray-800 text-gray-200 hover:bg-gray-700 hover:scale-[1.02] shadow-md border border-gray-700/50'
+            } ${(statusMessage !== 'idle' && statusMessage !== 'recording') ? 'opacity-40 cursor-not-allowed' : ''}`}
+            title={isRecording ? 'Release to Transcribe' : 'Hold to Speak'}
+          >
+            <span>🎙️</span>
+            <span className="hidden sm:inline">{isRecording ? 'Release to Send' : 'Hold to Speak'}</span>
+          </button>
+        </form>
       </div>
     </div>
   );
