@@ -1,134 +1,442 @@
-# 🎙️ Vanguard: Autonomous Business Intake Agent (Support Sync)
+# Autonomous Business Intake Agent (Support Sync)
 
-Vanguard is an elite, fully local, voice-to-voice AI customer success agent built for Zenvixor Studios. It utilizes a distributed microservice architecture to capture user audio, transcribe it in real-time, maintain conversational memory, and generate context-aware streaming responses using local LLMs.
-
----
-
-## 🧠 Architectural Overview & Workflow
-
-This platform operates by completely decoupling the audio capture, transcription, memory, and AI generation into distinct layers:
-
-1. **Client Interface (Next.js & Browser Native):** The user holds a button on the UI. The browser's native `MediaRecorder` API captures the hardware microphone and packages the audio into a `.webm` Blob.
-2. **API Gateway (Next.js Edge/Node):** The Next.js backend receives the audio Blob and orchestrates the workflow.
-3. **Transcription Microservice (FastAPI + Whisper):** The Gateway forwards the binary audio to an isolated Python server running `faster-whisper`. The audio is converted to text and returned to the Gateway.
-4. **Memory Retrieval (Redis):** The Gateway checks the local Redis database for any existing conversation history linked to the user's session.
-5. **LLM Generation (Ollama):** The newly transcribed text, the historical context, and the strict Zenvixor System Persona are sent to a local Ollama instance (`gemma3:4b`).
-6. **Streaming & State Persistence:** The Vercel AI SDK streams the text response back to the UI chunk-by-chunk. Once complete, the Gateway saves the updated conversation history back into Redis.
+An elite, fully local, voice-to-voice AI customer success agent built for businesses. It uses a distributed microservice architecture to capture user audio, transcribe it in real time, retrieve factual business data through a Retrieval-Augmented Generation (RAG) pipeline, maintain conversational memory, and generate context-aware streaming responses using local large language models (LLMs).
 
 ---
 
-## 🛠️ Tech Stack
+# 🧠 Architectural Overview & Workflow
 
-- **Frontend:** Next.js (App Router), React, Tailwind CSS
-- **API Gateway / Orchestration:** Next.js Serverless Routes, Vercel AI SDK
-- **Memory / State Management:** Redis (Docker), `ioredis`
-- **Transcription Engine:** Python, FastAPI, `faster-whisper`, `python-multipart`
-- **LLM Engine:** Ollama (`gemma3:4b`)
-- **Environment Management:** `uv` (Python), `npm` (Node)
+The platform is designed around a decoupled architecture where each responsibility is handled by an independent service.
 
----
+## 1. Client Interface (Next.js & Browser Native)
 
-## ⚙️ Prerequisites
-
-Before starting, ensure you have the following installed on your machine:
-
-- [Node.js & npm](https://nodejs.org/)
-- [Python 3.11+](https://www.python.org/) & [`uv` package manager](https://github.com/astral-sh/uv)
-- [Docker Desktop](https://www.docker.com/) (For Redis)
-- [Ollama](https://ollama.com/)
+- The user holds a button on the web interface.
+- The browser's native `MediaRecorder` API captures microphone input.
+- Audio is packaged as a `.webm` Blob.
+- The recorded audio is sent to the API Gateway.
 
 ---
 
-## 🚀 Installation & Setup Guide
+## 2. API Gateway (Next.js Edge/Node)
 
-### 1. Set Up the AI Engine (Ollama)
+The Next.js backend acts as the orchestrator for the entire pipeline.
 
-Ensure Ollama is running and pull the required model:
+Its responsibilities include:
 
-```bash
-ollama run gemma3:4b
+- Receiving recorded audio
+- Forwarding audio to the transcription service
+- Querying the vector database
+- Retrieving conversation memory
+- Sending prompts to the local LLM
+- Streaming responses back to the frontend
+- Persisting updated conversation history
+
+---
+
+## 3. Transcription Microservice (FastAPI + Whisper)
+
+The Gateway forwards the audio to an isolated Python service running `faster-whisper`.
+
+Workflow:
+
+1. Receive binary audio
+2. Convert speech to text
+3. Return transcription to the Gateway
+
+---
+
+## 4. Vector Retrieval & Guardrails (ChromaDB + Nomic)
+
+The transcribed text is converted into embeddings using Ollama's `nomic-embed-text` model.
+
+The Gateway then:
+
+- Queries the local ChromaDB instance
+- Retrieves the most relevant business knowledge
+- Measures similarity using vector distance
+
+### Guardrail
+
+If the returned distance exceeds the configured threshold:
+
+```
+DISTANCE_THRESHOLD = 450
 ```
 
-### 2. Set Up the Memory Store (Redis)
+the request is considered outside the business knowledge scope.
 
-We use Docker to run a lightweight, isolated Redis instance without cluttering the host system.
+Instead of allowing the LLM to answer, the Gateway immediately returns a predefined refusal response to prevent hallucinations.
 
-```bash
-docker run --name vanguard-redis -p 6379:6379 -d redis:alpine
+---
+
+## 5. Memory Retrieval (Redis)
+
+The Gateway checks Redis for any conversation history associated with the current session.
+
+This enables:
+
+- Multi-turn conversations
+- Context awareness
+- Session continuity
+
+---
+
+## 6. LLM Generation (Ollama)
+
+The following inputs are combined:
+
+- Current transcription
+- Retrieved business context
+- Previous conversation history
+- System prompt/persona
+
+These are sent to the local Ollama model:
+
+```
+gemma3:4b
 ```
 
-_(To verify it is running, use `docker ps`.)_
+---
 
-### 3. Set Up the Transcription Microservice (Python)
+## 7. Streaming & State Persistence
 
-Navigate to the Python backend directory and set up the isolated environment:
+The generated response is streamed back to the frontend using the Vercel AI SDK.
+
+After generation completes:
+
+- Updated conversation history is saved to Redis
+- Session expiration timer is refreshed
+
+---
+
+# 🛠️ Tech Stack
+
+## Frontend
+
+- Next.js (App Router)
+- React
+- Tailwind CSS
+
+## API Gateway / Orchestration
+
+- Next.js Server Routes
+- Vercel AI SDK
+
+## Memory
+
+- Redis (Docker)
+- ioredis
+
+## Vector Database
+
+- ChromaDB (Docker)
+- chromadb JavaScript Client
+
+## Speech-to-Text
+
+- Python
+- FastAPI
+- faster-whisper
+- python-multipart
+
+## Knowledge Base Ingestion
+
+- Python
+- LangChain
+- PyPDF
+
+## Local AI Models
+
+- Ollama
+- gemma3:4b
+- nomic-embed-text
+
+## Environment Management
+
+- npm
+- uv
+
+---
+
+# ⚙️ Prerequisites
+
+Before running the project, install the following:
+
+- Node.js
+- npm
+- Python 3.11+
+- uv
+- Docker Desktop
+- Ollama
+
+---
+
+# 🚀 Installation & Setup Guide
+
+## 1. Install the AI Models (Ollama)
+
+Ensure Ollama is running.
+
+Pull the required models:
 
 ```bash
-# Initialize uv virtual environment
+ollama pull gemma3:4b
+ollama pull nomic-embed-text
+```
+
+---
+
+## 2. Start Redis & ChromaDB
+
+Run Redis:
+
+```bash
+docker run --name business-redis -p 6379:6379 -d redis:alpine
+```
+
+Run ChromaDB:
+
+```bash
+docker run -d \
+--name business-chroma \
+-p 8001:8000 \
+-v business-chroma-data:/chroma/chroma \
+chromadb/chroma
+```
+
+---
+
+## 3. Configure the Python Backend
+
+Navigate to the backend directory.
+
+Create a virtual environment:
+
+```bash
 uv python pin 3.11
 uv venv
-.\.venv\Scripts\activate
-
-# Install dependencies
-uv pip install fastapi uvicorn faster-whisper python-multipart
 ```
 
-### 4. Set Up the Client & Gateway (Next.js)
+Activate it (Windows):
 
-Navigate to the `ui` directory and install the Node dependencies:
+```bash
+.\.venv\Scripts\activate
+```
+
+Install dependencies:
+
+```bash
+uv pip install fastapi uvicorn faster-whisper python-multipart langchain pypdf chromadb
+```
+
+---
+
+## 4. Ingest the Knowledge Base
+
+Create a folder named:
+
+```
+knowledge_base/
+```
+
+Place all business PDFs inside it.
+
+Run:
+
+```bash
+python ingest.py
+```
+
+This process:
+
+- Reads PDFs
+- Splits documents into chunks
+- Generates embeddings
+- Stores them in ChromaDB
+
+---
+
+## 5. Configure the Next.js Application
+
+Navigate to the UI directory.
+
+Install dependencies:
 
 ```bash
 cd ui
 npm install
-npm install ai ai-sdk-ollama ioredis
+npm install ai ai-sdk-ollama ioredis chromadb
 ```
 
 ---
 
-## 🏃‍♂️ Running the Application
+# 🏃 Running the Application
 
-To boot up the full Vanguard ecosystem, you need to run three separate services concurrently.
+Three services must run simultaneously.
 
-### Terminal 1: Ensure Redis is running
+---
+
+## Terminal 1 — Start Docker Services
 
 ```bash
-docker start vanguard-redis
+docker start business-redis business-chroma
 ```
 
-### Terminal 2: Start the FastAPI Transcriber
+---
+
+## Terminal 2 — Start the FastAPI Server
 
 ```bash
-# From your python backend folder
 .\.venv\Scripts\activate
-uvicorn main:app
+
+python -m uvicorn main:app
 ```
 
-_(Runs on http://127.0.0.1:8000)_
+Runs on:
 
-### Terminal 3: Start the Next.js App
+```
+http://127.0.0.1:8000
+```
+
+---
+
+## Terminal 3 — Start Next.js
 
 ```bash
-# From your /ui folder
+cd ui
+
 npm run dev
 ```
 
-_(Runs on http://localhost:3000)_
+Runs on:
 
-Navigate to http://localhost:3000 in your browser. Hold the microphone button, ask a question about Zenvixor Studios, and interact with the agent!
+```
+http://localhost:3000
+```
+
+Open:
+
+```
+http://localhost:3000
+```
+
+to interact with the application.
 
 ---
 
-## 💾 How the Memory System (Redis) Works
+# 💾 Memory System (Redis)
 
-LLMs are inherently stateless. To create a conversational agent, we must maintain a running log of the interaction. We use Redis for fast, ephemeral session storage.
+Large Language Models are stateless.
 
-- **Initialization:** When a user sends their first voice message, the Next.js API Gateway queries Redis using a unique `sessionId`.
-- **Context Injection:** If the history is empty, the system injects the System Persona (business details, boundaries, and rules) at index `0` of the array.
-- **Appending:** The user's transcribed text is pushed to the array as:
+Redis provides fast, temporary session storage.
 
-```javascript
-{ role: 'user', content: '...' }
+## Initialization
+
+The Gateway queries Redis using a unique session ID.
+
+---
+
+## Appending Messages
+
+Each user message is appended to the conversation history.
+
+---
+
+## AI Processing
+
+The complete history is sent to the LLM so it can maintain conversational context.
+
+---
+
+## Persistence
+
+After streaming completes:
+
+- Updated history is serialized
+- Saved back into Redis
+- Expiration is refreshed
+
+Example:
+
+```
+EX 3600
 ```
 
-- **AI Processing:** The entire array is sent to Ollama so it remembers what was said 5 minutes ago.
-- **Persistence:** After Ollama finishes streaming the reply, the AI's response is appended to the array. The array is serialized via `JSON.stringify()` and saved back to Redis with an expiration flag (`EX 3600`), ensuring old chat sessions automatically delete themselves after 1 hour to save memory.
+This automatically deletes inactive sessions after one hour.
+
+---
+
+# 🛡️ Retrieval-Augmented Generation (RAG) & Guardrails
+
+To minimize hallucinations, the system relies on a restricted retrieval pipeline.
+
+## Query Optimization
+
+Very short queries (less than 30 characters) are automatically expanded with business-related context before embedding generation.
+
+This improves retrieval quality.
+
+---
+
+## Similarity Search
+
+ChromaDB returns the closest document matches along with vector distance scores.
+
+---
+
+## Distance Threshold
+
+```
+DISTANCE_THRESHOLD = 450
+```
+
+- Distance ≤ 450 → Relevant business context
+- Distance > 450 → Outside supported scope
+
+---
+
+## Hard Short-Circuit
+
+If the similarity score exceeds the threshold:
+
+1. The Gateway skips the LLM entirely.
+2. A predefined refusal message is returned.
+3. Hallucinations are prevented.
+4. Responses remain limited to verified business knowledge.
+
+---
+
+# 📌 Overall Request Flow
+
+```text
+Browser
+    │
+    ▼
+MediaRecorder
+    │
+    ▼
+Next.js API Gateway
+    │
+    ├──────────────► FastAPI (Whisper)
+    │                     │
+    │                     ▼
+    │               Transcribed Text
+    │
+    ├──────────────► ChromaDB
+    │                     │
+    │                     ▼
+    │             Relevant Business Context
+    │
+    ├──────────────► Redis
+    │                     │
+    │                     ▼
+    │            Conversation History
+    │
+    ├──────────────► Ollama (gemma3:4b)
+    │                     │
+    │                     ▼
+    │            Streaming Response
+    │
+    ▼
+Next.js Client
+```
