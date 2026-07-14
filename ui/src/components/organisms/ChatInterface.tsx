@@ -31,7 +31,7 @@ export const ChatInterface = () => {
       
       if (!res.ok) throw new Error('Network communication failure');
 
-      // Check if response is JSON (e.g. error/empty_speech)
+
       const contentType = res.headers.get('content-type');
       if (contentType && contentType.includes('application/json')) {
         const json = await res.json();
@@ -121,7 +121,7 @@ export const ChatInterface = () => {
     const textToSend = typedInput.trim();
     setTypedInput('');
 
-    // Optimistically show user message
+
     setMessages(prev => [...prev, { role: 'user', content: textToSend }]);
 
     const formData = new FormData();
