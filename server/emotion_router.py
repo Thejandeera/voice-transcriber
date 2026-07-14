@@ -6,7 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from faster_whisper import WhisperModel
 from transformers import pipeline
 
-# Suppress noisy warnings for cleaner server logs
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 warnings.filterwarnings("ignore")
@@ -74,7 +73,7 @@ async def analyze_emotion(
     input_text = None
     transcribed_text = None
 
-    # --- Handle audio file ---
+   
     if file and file.filename:
         print(f"Received audio file: {file.filename}")
         temp_path = f"temp_emotion_{file.filename}"
@@ -102,9 +101,8 @@ async def analyze_emotion(
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
-    # --- Handle raw text ---
     if text and text.strip():
-        # If no audio was provided, use the text input
+      
         if input_text is None:
             input_text = text.strip()
 
@@ -114,7 +112,7 @@ async def analyze_emotion(
             detail="Please provide either an audio file or a text message.",
         )
 
-    # --- Run RoBERTa emotion detection ---
+   
     print(f"Running RoBERTa inference on: {input_text[:80]}...")
     emotion_result = predict_emotion(input_text)
     print(f"Predicted: {emotion_result['label']} ({emotion_result['score']})")
