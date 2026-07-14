@@ -1,8 +1,6 @@
-/* =============================================
-   Emotion Analyzer — /model page styles
-   ============================================= */
 
-/* ---------- Page layout & animated background ---------- */
+
+
 .model-page {
   position: relative;
   min-height: 100vh;
@@ -55,7 +53,7 @@
   100% { transform: translate(-20px, 15px) scale(0.95); }
 }
 
-/* ---------- Container ---------- */
+
 .model-container {
   position: relative;
   z-index: 1;
@@ -66,7 +64,7 @@
   gap: 1.75rem;
 }
 
-/* ---------- Header ---------- */
+
 .model-header {
   text-align: center;
 }
@@ -104,7 +102,7 @@
   margin: 0 auto;
 }
 
-/* ---------- Glass card ---------- */
+
 .model-card {
   background: rgba(15, 15, 25, 0.7);
   backdrop-filter: blur(24px);
@@ -117,7 +115,7 @@
   gap: 1rem;
 }
 
-/* ---------- Labels ---------- */
+
 .model-label {
   font-size: 0.75rem;
   font-weight: 600;
@@ -126,7 +124,7 @@
   color: #94a3b8;
 }
 
-/* ---------- Textarea ---------- */
+
 .model-textarea {
   width: 100%;
   background: rgba(15, 23, 42, 0.6);
@@ -154,7 +152,7 @@
   opacity: 0.5;
 }
 
-/* ---------- Divider ---------- */
+
 .model-divider {
   display: flex;
   align-items: center;
@@ -175,7 +173,7 @@
   color: #475569;
 }
 
-/* ---------- Drop zone ---------- */
+
 .model-dropzone {
   border: 2px dashed rgba(99, 102, 241, 0.25);
   border-radius: 0.75rem;
@@ -269,7 +267,7 @@
   background: rgba(239, 68, 68, 0.3);
 }
 
-/* ---------- Error ---------- */
+
 .model-error {
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.25);
@@ -283,7 +281,7 @@
   animation: fadeSlideIn 0.3s ease;
 }
 
-/* ---------- Actions ---------- */
+
 .model-actions {
   display: flex;
   gap: 0.75rem;
@@ -341,7 +339,7 @@
   cursor: not-allowed;
 }
 
-/* ---------- Spinner ---------- */
+
 .model-spinner {
   width: 16px;
   height: 16px;
@@ -355,7 +353,7 @@
   to { transform: rotate(360deg); }
 }
 
-/* ---------- Result card ---------- */
+
 .model-result {
   background: rgba(15, 15, 25, 0.7);
   backdrop-filter: blur(24px);
@@ -401,7 +399,7 @@
   transition: color 0.3s;
 }
 
-/* ---------- Confidence bar ---------- */
+
 .model-confidence {
   display: flex;
   flex-direction: column;
@@ -429,7 +427,7 @@
   transition: width 0.6s ease;
 }
 
-/* ---------- Transcript section ---------- */
+
 .model-result__transcript,
 .model-result__input-section {
   background: rgba(15, 23, 42, 0.5);
@@ -455,7 +453,7 @@
   font-style: italic;
 }
 
-/* ---------- History ---------- */
+
 .model-history {
   background: rgba(15, 15, 25, 0.5);
   backdrop-filter: blur(16px);
@@ -520,7 +518,7 @@
   min-width: 0;
 }
 
-/* ---------- Responsive ---------- */
+
 @media (max-width: 640px) {
   .model-page {
     padding: 1.5rem 1rem 3rem;

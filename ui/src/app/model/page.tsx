@@ -10,7 +10,7 @@ interface AnalysisResult {
   confidence: number;
 }
 
-// Curated emotion color map for the 28 GoEmotions labels
+
 const EMOTION_COLORS: Record<string, { bg: string; text: string; glow: string }> = {
   admiration:     { bg: "rgba(251,191,36,0.15)",  text: "#fbbf24", glow: "0 0 24px rgba(251,191,36,0.3)" },
   amusement:      { bg: "rgba(52,211,153,0.15)",  text: "#34d399", glow: "0 0 24px rgba(52,211,153,0.3)" },
@@ -61,7 +61,7 @@ export default function ModelPage() {
 
   const ACCEPTED_AUDIO = ".wav,.mp3,.ogg,.webm,.m4a,.flac,.aac,.wma,.opus";
 
-  /* ---- Drag & drop handlers ---- */
+
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(true);
@@ -84,7 +84,7 @@ export default function ModelPage() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  /* ---- Submit to backend ---- */
+
   const handleAnalyze = async () => {
     if (!textInput.trim() && !selectedFile) {
       setError("Please enter text or upload an audio file first.");
@@ -132,13 +132,13 @@ export default function ModelPage() {
 
   return (
     <main className="model-page">
-      {/* Animated background blobs */}
+
       <div className="model-bg-blob model-bg-blob--1" />
       <div className="model-bg-blob model-bg-blob--2" />
       <div className="model-bg-blob model-bg-blob--3" />
 
       <div className="model-container">
-        {/* Header */}
+
         <header className="model-header">
           <div className="model-header__badge">RoBERTa · 28 Emotions</div>
           <h1 className="model-header__title">Emotion Analyzer</h1>
@@ -148,9 +148,9 @@ export default function ModelPage() {
           </p>
         </header>
 
-        {/* Input card */}
+
         <section className="model-card">
-          {/* Text input */}
+
           <label htmlFor="emotion-text-input" className="model-label">
             Text Message
           </label>
@@ -164,14 +164,14 @@ export default function ModelPage() {
             disabled={isAnalyzing}
           />
 
-          {/* Divider */}
+
           <div className="model-divider">
             <span className="model-divider__line" />
             <span className="model-divider__text">OR</span>
             <span className="model-divider__line" />
           </div>
 
-          {/* File upload zone */}
+
           <label htmlFor="emotion-file-input" className="model-label">
             Upload Audio File
           </label>
@@ -219,14 +219,14 @@ export default function ModelPage() {
             )}
           </div>
 
-          {/* Error */}
+
           {error && (
             <div className="model-error">
               <span>⚠</span> {error}
             </div>
           )}
 
-          {/* Actions */}
+
           <div className="model-actions">
             <button
               id="analyze-button"
@@ -255,7 +255,7 @@ export default function ModelPage() {
           </div>
         </section>
 
-        {/* Result card */}
+
         {result && emotionStyle && (
           <section
             className="model-result"
@@ -274,7 +274,7 @@ export default function ModelPage() {
               {result.emotion.toUpperCase()}
             </h2>
 
-            {/* Confidence bar */}
+
             <div className="model-confidence">
               <div className="model-confidence__label">
                 <span>Confidence</span>
@@ -292,7 +292,7 @@ export default function ModelPage() {
               </div>
             </div>
 
-            {/* Transcribed text (if audio was uploaded) */}
+
             {result.transcribed_text && (
               <div className="model-result__transcript">
                 <span className="model-result__transcript-label">Transcribed Text</span>
@@ -300,7 +300,7 @@ export default function ModelPage() {
               </div>
             )}
 
-            {/* Input text */}
+
             <div className="model-result__input-section">
               <span className="model-result__transcript-label">Analyzed Text</span>
               <p className="model-result__transcript-text">&ldquo;{result.input_text}&rdquo;</p>
@@ -308,7 +308,7 @@ export default function ModelPage() {
           </section>
         )}
 
-        {/* History */}
+
         {history.length > 1 && (
           <section className="model-history">
             <h3 className="model-history__title">Previous Results</h3>

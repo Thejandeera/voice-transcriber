@@ -46,13 +46,11 @@ def load_models():
 
 
 def transcribe_audio(file_path: str) -> str:
-    """Transcribe an audio file using the loaded Whisper model."""
     segments, _ = whisper_model.transcribe(file_path, beam_size=5)
     return " ".join([segment.text for segment in segments]).strip()
 
 
 def predict_emotion(text: str) -> dict:
-    """Run RoBERTa inference on the given text and return label + score."""
     result = roberta_model(text, truncation=True, max_length=512)[0]
     return {"label": result["label"], "score": round(result["score"], 4)}
 
@@ -62,14 +60,6 @@ async def analyze_emotion(
     file: UploadFile | None = File(None),
     text: str | None = Form(None),
 ):
-    """
-    Accepts either:
-      - An audio file upload (transcribed by Whisper, then analyzed)
-      - A text string (analyzed directly)
-      - Both (audio takes priority for the text source)
-    Returns the transcribed text, predicted emotion, and confidence score.
-    """
-
     input_text = None
     transcribed_text = None
 

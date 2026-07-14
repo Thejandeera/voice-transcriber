@@ -86,7 +86,7 @@ npm run dev
 
 ### 4. Open the Emotion Analyzer Page
 
-Navigate to: **http://localhost:3000/model**
+Navigate to: **http://localhost:3000/model** to see the sentiment analysis.
 
 ---
 
