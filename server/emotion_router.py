@@ -1,6 +1,7 @@
 import os
 import shutil
 import warnings
+import site
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from faster_whisper import WhisperModel
@@ -9,6 +10,17 @@ from transformers import pipeline
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 warnings.filterwarnings("ignore")
+
+try:
+    for site_packages in site.getsitepackages():
+        cudnn_path = os.path.join(site_packages, "nvidia", "cudnn", "bin")
+        cublas_path = os.path.join(site_packages, "nvidia", "cublas", "bin")
+        if os.path.exists(cudnn_path):
+            os.add_dll_directory(cudnn_path)
+        if os.path.exists(cublas_path):
+            os.add_dll_directory(cublas_path)
+except Exception:
+    pass
 
 app = FastAPI(title="Emotion Analysis Microservice")
 
@@ -23,37 +35,60 @@ app.add_middleware(
 whisper_model = None
 roberta_model = None
 
+def categorize_emotion(emotion: str, score: float) -> str:
+    positive_emotions = {
+        "admiration", "amusement", "approval", "caring", "desire", 
+        "excitement", "gratitude", "joy", "love", "optimism", "pride", "relief"
+    }
+    
+    negative_emotions = {
+        "anger", "annoyance", "disappointment", "disapproval", "disgust", 
+        "embarrassment", "fear", "grief", "nervousness", "remorse", "sadness"
+    }
+    
+    neutral_or_ambiguous = {
+        "confusion", "curiosity", "realization", "surprise", "neutral"
+    }
+
+    if emotion in positive_emotions:
+        if score >= 0.60:
+            return "positive"
+        else:
+            return "neutral"
+            
+    elif emotion in negative_emotions:
+        if score >= 0.70:
+            return "negative"
+        else:
+            return "neutral"
+            
+    else:
+        if emotion == "surprise" and score >= 0.80:
+            return "positive"
+        return "neutral"
 
 @app.on_event("startup")
 def load_models():
     global whisper_model, roberta_model
 
-    print("Loading Whisper AI into memory...")
     whisper_model = WhisperModel(
-        model_size_or_path="base",
-        device="cpu",
-        compute_type="int8"
+        model_size_or_path="medium", 
+        device="cuda",
+        compute_type="float16"
     )
-    print("Whisper model loaded.")
 
-    print("Loading RoBERTa emotion model (SamLowe/roberta-base-go_emotions)...")
     roberta_model = pipeline(
         "text-classification",
         model="SamLowe/roberta-base-go_emotions",
     )
-    print("RoBERTa model loaded.")
-    print("Emotion Analysis Microservice Ready on Port 8001")
-
 
 def transcribe_audio(file_path: str) -> str:
     segments, _ = whisper_model.transcribe(file_path, beam_size=5)
     return " ".join([segment.text for segment in segments]).strip()
 
-
 def predict_emotion(text: str) -> dict:
     result = roberta_model(text, truncation=True, max_length=512)[0]
     return {"label": result["label"], "score": round(result["score"], 4)}
-
 
 @app.post("/analyze")
 async def analyze_emotion(
@@ -63,17 +98,13 @@ async def analyze_emotion(
     input_text = None
     transcribed_text = None
 
-   
     if file and file.filename:
-        print(f"Received audio file: {file.filename}")
         temp_path = f"temp_emotion_{file.filename}"
         try:
             with open(temp_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
 
-            print("Transcribing audio with Whisper...")
             transcribed_text = transcribe_audio(temp_path)
-            print(f"Transcribed: {transcribed_text}")
 
             if not transcribed_text:
                 raise HTTPException(
@@ -85,14 +116,12 @@ async def analyze_emotion(
         except HTTPException:
             raise
         except Exception as e:
-            print(f"Error processing audio: {str(e)}")
             raise HTTPException(status_code=500, detail="Audio transcription failed.")
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
     if text and text.strip():
-      
         if input_text is None:
             input_text = text.strip()
 
@@ -102,15 +131,17 @@ async def analyze_emotion(
             detail="Please provide either an audio file or a text message.",
         )
 
-   
-    print(f"Running RoBERTa inference on: {input_text[:80]}...")
     emotion_result = predict_emotion(input_text)
-    print(f"Predicted: {emotion_result['label']} ({emotion_result['score']})")
+    raw_emotion = emotion_result["label"]
+    confidence_score = emotion_result["score"]
+    
+    bucketed_sentiment = categorize_emotion(raw_emotion, confidence_score)
 
     return {
         "status": "success",
         "transcribed_text": transcribed_text,
         "input_text": input_text,
-        "emotion": emotion_result["label"],
-        "confidence": emotion_result["score"],
+        "emotion": raw_emotion,
+        "sentiment_category": bucketed_sentiment,
+        "confidence": confidence_score,
     }
