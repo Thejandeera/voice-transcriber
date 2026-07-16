@@ -5,7 +5,6 @@ import site
 import re
 import time
 import sys
-import io
 import wave
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,7 +55,6 @@ def categorize_emotion(emotion: str, score: float) -> str:
 @app.on_event("startup")
 def load_models():
     global whisper_model, roberta_model
-    # Switched to SMALL model for ultra-low latency real-time transcription
     whisper_model = WhisperModel("small", device="cuda", compute_type="int8_float16")
     roberta_model = pipeline("text-classification", model="SamLowe/roberta-base-go_emotions")
 
@@ -70,27 +68,24 @@ async def live_stream(websocket: WebSocket):
     analyzed_sentences = set()
     raw_audio_buffer = bytearray()
     
-    temp_file = f"temp_{id(websocket)}.wav" # Note: Changed to .wav
+    temp_file = f"temp_{id(websocket)}.wav" 
     
-    # We will process audio every 2 seconds to avoid overloading Whisper
     chunk_timer = time.time() 
 
     try:
         while True:
-            # Receive the raw Int16 audio data from the browser
             chunk = await websocket.receive_bytes()
             raw_audio_buffer.extend(chunk)
             
-            # Process the buffer every 2 seconds
-            if time.time() - chunk_timer > 2.0:
+            # Increased from 2.0 to 2.5 seconds to give Whisper slightly more context per loop
+            if time.time() - chunk_timer > 2.5:
                 if len(raw_audio_buffer) == 0:
                     continue
                     
-                # Wrap the raw data in a proper WAV container
                 with wave.open(temp_file, 'wb') as wav_file:
-                    wav_file.setnchannels(1)      # Mono
-                    wav_file.setsampwidth(2)      # 2 bytes per sample (Int16)
-                    wav_file.setframerate(16000)  # 16kHz (Standard for Whisper)
+                    wav_file.setnchannels(1)      
+                    wav_file.setsampwidth(2)      
+                    wav_file.setframerate(16000)  
                     wav_file.writeframes(raw_audio_buffer)
 
                 try:
@@ -98,13 +93,13 @@ async def live_stream(websocket: WebSocket):
                     full_transcript = " ".join([segment.text for segment in segments]).strip()
 
                     if full_transcript:
-                        sentences = re.split(r'(?<=[.!?]) +', full_transcript)
+                        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', full_transcript) if s.strip()]
+                        
                         partial_text = ""
+                        sentence_completed = False # Track if we actually finished a sentence
                         
                         for sentence in sentences:
-                            sentence = sentence.strip()
-                            if not sentence: continue
-                            
+                            # CRITICAL FIX: Ensure the sentence actually ends with punctuation
                             if re.search(r'[.!?]$', sentence):
                                 if sentence not in analyzed_sentences:
                                     emotion_data = predict_emotion(sentence)
@@ -118,29 +113,31 @@ async def live_stream(websocket: WebSocket):
                                         "confidence": emotion_data["score"]
                                     })
                                     analyzed_sentences.add(sentence)
-                                    # Clear the buffer so we don't re-transcribe old audio
-                                    raw_audio_buffer.clear()
+                                    sentence_completed = True
                             else:
                                 partial_text = sentence
 
-                        if partial_text:
-                            await websocket.send_json({
-                                "type": "partial",
-                                "text": partial_text
-                            })
+                        await websocket.send_json({
+                            "type": "partial",
+                            "text": partial_text
+                        })
+
+                        # ONLY clear the buffer if a complete sentence was found.
+                        # Otherwise, let the buffer keep growing so the partial word isn't cut off.
+                        if sentence_completed:
+                            raw_audio_buffer.clear()
 
                 except Exception as e:
                     pass 
                 
-                # Reset the timer
                 chunk_timer = time.time()
                 
-                # Fail-safe: If the buffer gets older than 15 seconds without a sentence break, clear it
-                if len(raw_audio_buffer) > (16000 * 2 * 15): 
+                # Fail-safe: If buffer gets over 10 seconds with no punctuation, clear it anyway to prevent lag
+                if len(raw_audio_buffer) > (16000 * 2 * 10): 
                     raw_audio_buffer.clear()
 
     except WebSocketDisconnect:
-        print("Client disconnected.")
+        pass
     finally:
         if os.path.exists(temp_file):
             os.remove(temp_file)

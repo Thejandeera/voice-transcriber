@@ -41,10 +41,21 @@ const EMOTION_COLORS: Record<string, { bg: string; text: string; glow: string }>
   neutral:        { bg: "rgba(156,163,175,0.1)",  text: "#9ca3af", glow: "none" }
 };
 
+const CATEGORY_COLORS: Record<string, { bg: string; text: string }> = {
+  positive: { bg: "rgba(16, 185, 129, 0.2)", text: "#10b981" },
+  negative: { bg: "rgba(239, 68, 68, 0.2)", text: "#ef4444" },
+  neutral:  { bg: "rgba(156, 163, 175, 0.2)", text: "#9ca3af" }
+};
+
 const DEFAULT_EMOTION_STYLE = { bg: "rgba(99,102,241,0.15)", text: "#818cf8", glow: "0 0 24px rgba(99,102,241,0.3)" };
 
 function getEmotionStyle(emotion: string) {
   return EMOTION_COLORS[emotion.toLowerCase()] ?? DEFAULT_EMOTION_STYLE;
+}
+
+function getCategoryStyle(categoryName: string) {
+  const normalized = categoryName.toLowerCase();
+  return CATEGORY_COLORS[normalized] || CATEGORY_COLORS.neutral;
 }
 
 export default function ModelPage() {
@@ -57,6 +68,14 @@ export default function ModelPage() {
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll table to bottom when new items are added
+  useEffect(() => {
+    if (tableRef.current) {
+      tableRef.current.scrollTop = tableRef.current.scrollHeight;
+    }
+  }, [analyzedSentences]);
 
   useEffect(() => {
     return () => {
@@ -85,12 +104,10 @@ export default function ModelPage() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      // Initialize AudioContext to extract raw PCM data (16kHz is ideal for Whisper)
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       audioContextRef.current = audioContext;
       
       const source = audioContext.createMediaStreamSource(stream);
-      // Create a processor to grab chunks of audio (4096 buffer size)
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
 
@@ -99,17 +116,12 @@ export default function ModelPage() {
 
       processor.onaudioprocess = (e) => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
-          // Grab the raw audio data (Float32Array)
           const float32Array = e.inputBuffer.getChannelData(0);
-          
-          // Convert it to Int16 (Standard raw audio format)
           const int16Array = new Int16Array(float32Array.length);
           for (let i = 0; i < float32Array.length; i++) {
             const s = Math.max(-1, Math.min(1, float32Array[i]));
             int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
           }
-          
-          // Send the raw binary data
           wsRef.current.send(int16Array.buffer);
         }
       };
@@ -153,48 +165,75 @@ export default function ModelPage() {
           </p>
         </header>
 
-        <section className="model-input-section" style={{ alignItems: "center" }}>
+        <section className="model-input-section" style={{ alignItems: "center", padding: "1.5rem" }}>
           {error && <div className="model-error"><span>⚠</span> {error}</div>}
           
           {!isRecording ? (
-             <button className="model-btn-analyze" onClick={startLiveStream} style={{ width: "100%" }}>
+             <button className="model-btn-analyze" onClick={startLiveStream} style={{ width: "100%", padding: "1.25rem" }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: "8px", verticalAlign: "middle" }}>
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" y1="19" x2="12" y2="22"/>
+                </svg>
                 Initialize Live Microphone
              </button>
           ) : (
-             <button className="model-btn" onClick={stopLiveStream} style={{ background: "rgba(239,68,68,0.2)", color: "#f87171", border: "1px solid rgba(239,68,68,0.4)", width: "100%" }}>
+             <button className="model-btn" onClick={stopLiveStream} style={{ background: "rgba(239,68,68,0.2)", color: "#f87171", border: "1px solid rgba(239,68,68,0.4)", width: "100%", padding: "1.25rem" }}>
+                <div className="model-recording-pulse" style={{ marginRight: "8px", display: "inline-block" }}></div>
                 Stop Live Analysis
              </button>
           )}
         </section>
 
         {(analyzedSentences.length > 0 || livePartialText) && (
-          <section className="model-result-section" style={{ minHeight: "300px" }}>
-            <h3 className="model-result-title" style={{ fontSize: "1.2rem", textAlign: "left", marginBottom: "1rem" }}>Live Inference Feed</h3>
+          <section className="model-result-section">
+            <h3 className="model-result-title" style={{ fontSize: "1.2rem", textAlign: "left", marginBottom: "0.5rem" }}>Live Inference Log</h3>
             
-            <div className="model-live-feed">
-              {analyzedSentences.map((block, idx) => {
-                const style = getEmotionStyle(block.emotion);
-                return (
-                  <span 
-                    key={idx} 
-                    className="model-analyzed-block"
-                    style={{ 
-                      borderBottom: `2px solid ${style.text}`,
-                      backgroundColor: style.bg,
-                      color: "#e2e8f0"
-                    }}
-                    title={`${block.emotion.toUpperCase()} (${(block.confidence * 100).toFixed(1)}%)`}
-                  >
-                    {block.text}{" "}
-                  </span>
-                );
-              })}
-              
-              {livePartialText && (
-                <span className="model-partial-text">
-                  {livePartialText}...
-                </span>
-              )}
+            {/* Live Partial Text Indicator */}
+            <div className="model-live-indicator">
+              <span className="model-live-dot"></span>
+              <span className="model-live-text">
+                {livePartialText ? `"${livePartialText}..."` : "Listening..."}
+              </span>
+            </div>
+
+            {/* Structured Data Table */}
+            <div className="model-table-container" ref={tableRef}>
+              <table className="model-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: "50%" }}>Transcribed Text</th>
+                    <th style={{ width: "20%" }}>Sentiment</th>
+                    <th style={{ width: "20%" }}>Emotion</th>
+                    <th style={{ width: "10%", textAlign: "right" }}>Conf.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {analyzedSentences.map((block, idx) => {
+                    const emoStyle = getEmotionStyle(block.emotion);
+                    const catStyle = getCategoryStyle(block.sentiment_category);
+                    
+                    return (
+                      <tr key={idx}>
+                        <td className="model-table-text">"{block.text}"</td>
+                        <td>
+                          <span className="model-table-badge" style={{ background: catStyle.bg, color: catStyle.text, border: `1px solid ${catStyle.text}40` }}>
+                            {block.sentiment_category.toUpperCase()}
+                          </span>
+                        </td>
+                        <td>
+                          <span className="model-table-badge" style={{ background: emoStyle.bg, color: emoStyle.text }}>
+                            {block.emotion}
+                          </span>
+                        </td>
+                        <td style={{ textAlign: "right", color: "#9ca3af", fontVariantNumeric: "tabular-nums" }}>
+                          {(block.confidence * 100).toFixed(1)}%
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </section>
         )}
