@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import "./model.css";
 
 interface AnalysisResult {
-  input_text: string;
-  transcribed_text: string | null;
+  text: string;
   emotion: string;
   sentiment_category: string;
   confidence: number;
@@ -42,308 +41,160 @@ const EMOTION_COLORS: Record<string, { bg: string; text: string; glow: string }>
   neutral:        { bg: "rgba(156,163,175,0.1)",  text: "#9ca3af", glow: "none" }
 };
 
-const CATEGORY_COLORS: Record<string, { bg: string; text: string }> = {
-  positive: { bg: "rgba(16, 185, 129, 0.2)", text: "#10b981" },
-  negative: { bg: "rgba(239, 68, 68, 0.2)", text: "#ef4444" },
-  neutral:  { bg: "rgba(156, 163, 175, 0.2)", text: "#9ca3af" }
-};
+const DEFAULT_EMOTION_STYLE = { bg: "rgba(99,102,241,0.15)", text: "#818cf8", glow: "0 0 24px rgba(99,102,241,0.3)" };
 
-const API_URL = "http://localhost:8001/analyze";
+function getEmotionStyle(emotion: string) {
+  return EMOTION_COLORS[emotion.toLowerCase()] ?? DEFAULT_EMOTION_STYLE;
+}
 
-export default function EmotionPage() {
-  const [inputText, setInputText] = useState("");
-  const [audioFile, setAudioFile] = useState<File | null>(null);
-  
+export default function ModelPage() {
   const [isRecording, setIsRecording] = useState(false);
-  const [recordingTime, setRecordingTime] = useState(0);
-  
-  const [isLoading, setIsLoading] = useState(false);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [livePartialText, setLivePartialText] = useState("");
+  const [analyzedSentences, setAnalyzedSentences] = useState<AnalysisResult[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [history, setHistory] = useState<AnalysisResult[]>([]);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
-  const startRecording = async () => {
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) wsRef.current.close();
+    };
+  }, []);
+
+  const startLiveStream = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
+      setError(null);
+      setLivePartialText("");
+      setAnalyzedSentences([]);
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
+      wsRef.current = new WebSocket("ws://localhost:8001/live-stream");
+      
+      wsRef.current.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === "partial") {
+          setLivePartialText(data.text);
+        } else if (data.type === "analyzed") {
+          setAnalyzedSentences((prev) => [...prev, data]);
+          setLivePartialText(""); 
         }
       };
 
-      mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        const file = new File([audioBlob], "recording.webm", { type: "audio/webm" });
-        setAudioFile(file);
-        stream.getTracks().forEach((track) => track.stop());
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+
+      // Initialize AudioContext to extract raw PCM data (16kHz is ideal for Whisper)
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      audioContextRef.current = audioContext;
+      
+      const source = audioContext.createMediaStreamSource(stream);
+      // Create a processor to grab chunks of audio (4096 buffer size)
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+
+      processor.onaudioprocess = (e) => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          // Grab the raw audio data (Float32Array)
+          const float32Array = e.inputBuffer.getChannelData(0);
+          
+          // Convert it to Int16 (Standard raw audio format)
+          const int16Array = new Int16Array(float32Array.length);
+          for (let i = 0; i < float32Array.length; i++) {
+            const s = Math.max(-1, Math.min(1, float32Array[i]));
+            int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          }
+          
+          // Send the raw binary data
+          wsRef.current.send(int16Array.buffer);
+        }
       };
 
-      mediaRecorder.start();
       setIsRecording(true);
-      setRecordingTime(0);
 
-      timerRef.current = setInterval(() => {
-        setRecordingTime((prev) => prev + 1);
-      }, 1000);
-    } catch (err) {
-      console.error("Error accessing microphone:", err);
-      setError("Microphone access denied or unavailable.");
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      if (timerRef.current) clearInterval(timerRef.current);
-    }
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setAudioFile(e.target.files[0]);
-    }
-  };
-
-  const removeAudio = () => {
-    setAudioFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-  };
-
-  const analyze = async () => {
-    if (!inputText.trim() && !audioFile) {
-      setError("Please provide either text or an audio file.");
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-
-    const formData = new FormData();
-    if (inputText.trim()) formData.append("text", inputText);
-    if (audioFile) formData.append("file", audioFile);
-
-    try {
-      const response = await fetch(API_URL, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to analyze emotion.");
-      }
-
-      const data: AnalysisResult = await response.json();
-      setResult(data);
-      setHistory((prev) => [data, ...prev].slice(0, 5));
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || "An unexpected error occurred.");
-    } finally {
-      setIsLoading(false);
+      console.error("Error accessing microphone:", err);
+      setError("Microphone access denied or connection failed.");
     }
   };
 
-  const getEmotionStyle = (emotionName: string) => {
-    const normalized = emotionName.toLowerCase();
-    return EMOTION_COLORS[normalized] || EMOTION_COLORS.neutral;
-  };
-  
-  const getCategoryStyle = (categoryName: string) => {
-    const normalized = categoryName.toLowerCase();
-    return CATEGORY_COLORS[normalized] || CATEGORY_COLORS.neutral;
+  const stopLiveStream = () => {
+    setIsRecording(false);
+    
+    if (processorRef.current && audioContextRef.current) {
+      processorRef.current.disconnect();
+      audioContextRef.current.close();
+    }
+    
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
+
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
   };
 
   return (
     <main className="model-page">
-      <div className="model-bg-blob model-bg-blob--1"></div>
-      <div className="model-bg-blob model-bg-blob--2"></div>
-
+      <div className="model-bg-blob model-bg-blob--1" />
+      <div className="model-bg-blob model-bg-blob--2" />
+      
       <div className="model-container">
         <header className="model-header">
-          <div className="model-header__badge">Vanguard AI</div>
-          <h1 className="model-header__title">Emotion Matrix</h1>
-          <p className="model-header__desc">
-            Dual-modal analysis engine. Powered by Whisper GPU (CUDA) and RoBERTa base.
+          <div className="model-header__badge">Vanguard AI · Live Stream</div>
+          <h1 className="model-header__title">Live Emotion Matrix</h1>
+          <p className="model-header__subtitle">
+            Speak into the microphone. Transcriptions and emotional analysis occur in real-time.
           </p>
         </header>
 
-        <section className="model-input-section">
-          <div className="model-audio-card">
-            <h3 className="model-card-title">Acoustic Input</h3>
-            
-            <div className="model-audio-controls">
-              {!isRecording ? (
-                <button className="model-btn model-btn--record" onClick={startRecording}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
-                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-                    <line x1="12" y1="19" x2="12" y2="22"/>
-                  </svg>
-                  Initialize Microphone
-                </button>
-              ) : (
-                <button className="model-btn model-btn--stop" onClick={stopRecording}>
-                  <div className="model-recording-pulse"></div>
-                  Recording [{formatTime(recordingTime)}] - Stop
-                </button>
-              )}
-
-              <span className="model-audio-divider">OR</span>
-
-              <button className="model-btn model-btn--upload" onClick={() => fileInputRef.current?.click()}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                  <polyline points="17 8 12 3 7 8"/>
-                  <line x1="12" y1="3" x2="12" y2="15"/>
-                </svg>
-                Upload Audio (.wav, .mp3)
-              </button>
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                onChange={handleFileSelect} 
-                accept="audio/*" 
-                style={{ display: "none" }} 
-              />
-            </div>
-
-            {audioFile && (
-              <div className="model-audio-preview">
-                <div className="model-audio-info">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2">
-                    <path d="M9 18V5l12-2v13"/>
-                    <circle cx="6" cy="18" r="3"/>
-                    <circle cx="18" cy="16" r="3"/>
-                  </svg>
-                  <span className="model-audio-name">{audioFile.name}</span>
-                </div>
-                <button className="model-audio-remove" onClick={removeAudio}>✕</button>
-              </div>
-            )}
-          </div>
-
-          <div className="model-text-card">
-            <h3 className="model-card-title">Lexical Input (Override)</h3>
-            <textarea
-              className="model-textarea"
-              placeholder="Enter text directly, or leave blank to analyze acoustic transcription..."
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              rows={4}
-            />
-          </div>
-
-          {error && (
-            <div className="model-error">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="12" y1="8" x2="12" y2="12"/>
-                <line x1="12" y1="16" x2="12.01" y2="16"/>
-              </svg>
-              {error}
-            </div>
+        <section className="model-input-section" style={{ alignItems: "center" }}>
+          {error && <div className="model-error"><span>⚠</span> {error}</div>}
+          
+          {!isRecording ? (
+             <button className="model-btn-analyze" onClick={startLiveStream} style={{ width: "100%" }}>
+                Initialize Live Microphone
+             </button>
+          ) : (
+             <button className="model-btn" onClick={stopLiveStream} style={{ background: "rgba(239,68,68,0.2)", color: "#f87171", border: "1px solid rgba(239,68,68,0.4)", width: "100%" }}>
+                Stop Live Analysis
+             </button>
           )}
-
-          <button 
-            className={`model-btn-analyze ${isLoading ? "is-loading" : ""}`}
-            onClick={analyze}
-            disabled={isLoading || (!inputText.trim() && !audioFile)}
-          >
-            {isLoading ? "Executing Inference..." : "Initialize Analysis"}
-          </button>
         </section>
 
-        {result && (
-          <section className="model-result-section">
-            <div className="model-result-header">
-              <h2 className="model-result-title">Inference Results</h2>
-            </div>
+        {(analyzedSentences.length > 0 || livePartialText) && (
+          <section className="model-result-section" style={{ minHeight: "300px" }}>
+            <h3 className="model-result-title" style={{ fontSize: "1.2rem", textAlign: "left", marginBottom: "1rem" }}>Live Inference Feed</h3>
             
-            <div className="model-metrics-grid">
-              <div className="model-metric-card model-metric-card--primary" style={{ boxShadow: getEmotionStyle(result.emotion).glow }}>
-                <span className="model-metric-label">Primary Emotion</span>
-                <div className="model-metric-value" style={{ color: getEmotionStyle(result.emotion).text }}>
-                  {result.emotion.toUpperCase()}
-                </div>
-              </div>
-              
-              <div className="model-metric-card">
-                <span className="model-metric-label">Sentiment Category</span>
-                <div 
-                  className="model-metric-category" 
-                  style={{ 
-                    backgroundColor: getCategoryStyle(result.sentiment_category).bg,
-                    color: getCategoryStyle(result.sentiment_category).text
-                  }}
-                >
-                  {result.sentiment_category.toUpperCase()}
-                </div>
-              </div>
-              
-              <div className="model-metric-card">
-                <span className="model-metric-label">Confidence Score</span>
-                <div className="model-metric-value">
-                  {(result.confidence * 100).toFixed(2)}<span style={{ fontSize: "1rem", color: "#6b7280" }}>%</span>
-                </div>
-                <div className="model-confidence-bar-bg">
-                  <div 
-                    className="model-confidence-bar-fill" 
-                    style={{ 
-                      width: `${result.confidence * 100}%`,
-                      backgroundColor: getEmotionStyle(result.emotion).text
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="model-transcript-box">
-              <span className="model-transcript-label">Analyzed Sequence</span>
-              <p className="model-transcript-text">"{result.input_text}"</p>
-              {result.transcribed_text && result.input_text !== result.transcribed_text && (
-                 <p className="model-transcript-note">*Sourced via Whisper acoustic transcription</p>
-              )}
-            </div>
-          </section>
-        )}
-
-        {history.length > 0 && (
-          <section className="model-history-section">
-            <h3 className="model-history-title">Recent Inferences</h3>
-            <div className="model-history-list">
-              {history.map((item, index) => {
-                const style = getEmotionStyle(item.emotion);
-                const catStyle = getCategoryStyle(item.sentiment_category);
+            <div className="model-live-feed">
+              {analyzedSentences.map((block, idx) => {
+                const style = getEmotionStyle(block.emotion);
                 return (
-                  <div key={index} className="model-history-item">
-                    <span className="model-history__badge" style={{ background: style.bg, color: style.text }}>
-                      {item.emotion}
-                    </span>
-                    <span className="model-history__cat" style={{ background: catStyle.bg, color: catStyle.text, fontSize: "0.7rem", padding: "2px 6px", borderRadius: "4px", marginLeft: "8px" }}>
-                      {item.sentiment_category}
-                    </span>
-                    <span className="model-history__confidence">{(item.confidence * 100).toFixed(1)}%</span>
-                    <span className="model-history__text">{item.input_text.length > 50 ? item.input_text.slice(0, 50) + "…" : item.input_text}</span>
-                  </div>
+                  <span 
+                    key={idx} 
+                    className="model-analyzed-block"
+                    style={{ 
+                      borderBottom: `2px solid ${style.text}`,
+                      backgroundColor: style.bg,
+                      color: "#e2e8f0"
+                    }}
+                    title={`${block.emotion.toUpperCase()} (${(block.confidence * 100).toFixed(1)}%)`}
+                  >
+                    {block.text}{" "}
+                  </span>
                 );
               })}
+              
+              {livePartialText && (
+                <span className="model-partial-text">
+                  {livePartialText}...
+                </span>
+              )}
             </div>
           </section>
         )}
